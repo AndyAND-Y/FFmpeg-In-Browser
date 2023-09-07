@@ -48,7 +48,7 @@ export default function Home() {
                 await fetchFile(file)
             );
         await ffmpeg.exec(['-i', 'input.webm', 'output.mp4']);
-        const data = await ffmpeg.readFile('output.mp4');
+        const data = await ffmpeg.readFile('output.mp4') as Uint8Array
         videoRef.current.src =
             URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
     }
