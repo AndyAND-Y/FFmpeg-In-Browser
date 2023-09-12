@@ -8,7 +8,6 @@ export default function Home() {
 
     const [progress, setProgress] = useState(0);
     const [timeTaken, setTimeTaken] = useState(0);
-    const [splitSize, setSplitSize] = useState("1GB");
     const [logMessages, setLogMessages] = useState<string[]>([]);
 
     const [downloadLinks, setDownloadLinks] = useState<ReactElement[]>([]);
@@ -30,9 +29,6 @@ export default function Home() {
 
         const time = message.match(patternTime)?.[1];
         const speed = message.match(patternSpeed)?.[1];
-
-        console.log("speed: ", Number(speed));
-        console.log("time: ", time);
 
         if (time === undefined || speed === undefined) return;
 
@@ -86,30 +82,41 @@ export default function Home() {
         if (!inputRef.current || !inputRef.current.files) return;
 
         const file = inputRef.current.files[0];
-        const filesLen = 0
-        // file.size / (1024 * 1024 * 1024); "In Gb!";
 
         const ffmpeg = ffmpegRef.current;
         await ffmpeg.writeFile('input.mp4', await fetchFile(file));
-        // await ffmpeg.exec(['-i', 'input.mp4', '-c:v', 'copy', '-c:a', 'copy', '-f', 'segment', '-segment_time', splitSize, '-reset_timestamps', '1', '-map', '0', `output-part%d.mp4`]);
-        await ffmpeg.exec(['-i', 'input.mp4', 'output-part-1.mp4']);
-        const downloadLinks = [];
 
-        for (let i = 1; i <= 1; ++i) {
-            const outputFileName = `output-part-${i}.mp4`;
+        const outputDir = 'output/';
 
-            const outputFile = await ffmpeg.readFile(outputFileName) as Uint8Array;
-            const url = URL.createObjectURL(new Blob([outputFile.buffer], { type: 'video/mp4' }));
+        await ffmpeg.createDir(outputDir);
+        await ffmpeg.exec(['-i', 'input.mp4', '-c:v', 'copy', '-c:a', 'copy', '-f', 'segment', '-segment_time', '00:00:30', '-reset_timestamps', '1', '-map', '0', `${outputDir}output-part-%d.mp4`]);
 
-            const element: ReactElement = (<a href={url} download={outputFileName}>
-                {outputFileName}
-            </a>)
+        const outputFiles = await ffmpeg.listDir(outputDir);
 
-            downloadLinks.push(element);
+        const getUrl = async (file: { isDir: boolean, name: string }) => {
+            if (file.isDir) return;
 
+            const url = await ffmpeg.readFile(`${outputDir}${file.name}`).then((fileData) => {
+                return URL.createObjectURL(new Blob([(fileData as Uint8Array).buffer], { type: 'video/mp4' }));
+            })
+            return url;
         }
-        console.log(downloadLinks);
-        setDownloadLinks([...downloadLinks]);
+
+        outputFiles.map((file) => {
+            getUrl(file)
+                .then((url) => {
+                    if (!file.isDir) ffmpeg.deleteFile(`${outputDir}${file.name}`);
+                    return url;
+                })
+                .then((url) => {
+                    if (!url) return
+                    const element = (<a href={url} download={file.name}> {file.name}</a>)
+                    return element;
+                })
+                .then((el) => {
+                    if (el) setDownloadLinks((prev) => [...prev, el])
+                })
+        });
     }
 
     if (!loadedFFMPEG) {
@@ -137,7 +144,12 @@ export default function Home() {
                 </div>
 
                 <div>
-                    {downloadLinks}
+                    <ul>
+                        {downloadLinks.map((el, index) => {
+                            return <li key={index}>{el}</li>
+                        })}
+                    </ul>
+
                 </div>
 
             </div>
