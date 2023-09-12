@@ -2,14 +2,16 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
-import { useEffect, useRef, useState } from "react";
+import { ReactElement, useEffect, useRef, useState } from "react";
 
 export default function Home() {
 
     const [progress, setProgress] = useState(0);
     const [timeTaken, setTimeTaken] = useState(0);
+    const [splitSize, setSplitSize] = useState("1GB");
     const [logMessages, setLogMessages] = useState<string[]>([]);
 
+    const [downloadLinks, setDownloadLinks] = useState<ReactElement[]>([]);
 
     const [loadedFFMPEG, setLoadedFFMPEG] = useState(false);
     const ffmpegRef = useRef(new FFmpeg());
@@ -84,15 +86,30 @@ export default function Home() {
         if (!inputRef.current || !inputRef.current.files) return;
 
         const file = inputRef.current.files[0];
+        const filesLen = 0
+        // file.size / (1024 * 1024 * 1024); "In Gb!";
 
         const ffmpeg = ffmpegRef.current;
-        await ffmpeg
-            .writeFile(
-                'input.mp4',
-                await fetchFile(file)
-            );
-        await ffmpeg.exec(['-i', 'input.mp4', 'output.mp4']);
-        const data = await ffmpeg.readFile('output.mp4') as Uint8Array
+        await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+        // await ffmpeg.exec(['-i', 'input.mp4', '-c:v', 'copy', '-c:a', 'copy', '-f', 'segment', '-segment_time', splitSize, '-reset_timestamps', '1', '-map', '0', `output-part%d.mp4`]);
+        await ffmpeg.exec(['-i', 'input.mp4', 'output-part-1.mp4']);
+        const downloadLinks = [];
+
+        for (let i = 1; i <= 1; ++i) {
+            const outputFileName = `output-part-${i}.mp4`;
+
+            const outputFile = await ffmpeg.readFile(outputFileName) as Uint8Array;
+            const url = URL.createObjectURL(new Blob([outputFile.buffer], { type: 'video/mp4' }));
+
+            const element: ReactElement = (<a href={url} download={outputFileName}>
+                {outputFileName}
+            </a>)
+
+            downloadLinks.push(element);
+
+        }
+        console.log(downloadLinks);
+        setDownloadLinks([...downloadLinks]);
     }
 
     if (!loadedFFMPEG) {
@@ -118,6 +135,11 @@ export default function Home() {
                     <p>Time Remaning: {((100 / (progress * 100) - 1) * timeTaken).toFixed(2) + 's'}</p>
                     <p>Progress: {(progress * 100).toFixed(2) + '%'}</p>
                 </div>
+
+                <div>
+                    {downloadLinks}
+                </div>
+
             </div>
         </>
     );
