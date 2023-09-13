@@ -1,6 +1,7 @@
 "use client";
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import JSZip from 'jszip';
 
 import { ReactElement, useEffect, useRef, useState } from "react";
 
@@ -10,10 +11,13 @@ export default function Home() {
     const [timeTaken, setTimeTaken] = useState(0);
     const [logMessages, setLogMessages] = useState<string[]>([]);
     const [uploadedFileName, setUploadedFileName] = useState("");
-    const [inputTime, setInputTime] = useState("5");
+    const [inputTime, setInputTime] = useState("10");
 
 
-    const [downloadLinks, setDownloadLinks] = useState<ReactElement[]>([]);
+    const [downloadLinks, setDownloadLinks] = useState<{
+        filename: string;
+        url: string;
+    }[]>([]);
 
     const [loadedFFMPEG, setLoadedFFMPEG] = useState(false);
     const ffmpegRef = useRef(new FFmpeg());
@@ -45,12 +49,32 @@ export default function Home() {
             }, 0)
 
         setTimeTaken(timestamp / Number(speed));
-
     }
+
+    useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            if (inputTime === "NaN") {
+                setInputTime("10");
+            }
+            else if (Number(inputTime) < 10 || Number(inputTime) > 3600) {
+                setInputTime("10");
+            }
+        }, 100);
+
+        return () => {
+            clearTimeout(timeoutId);
+        }
+
+    }, [inputTime])
 
     const formatTime = (seconds: number | string) => {
         const s = Number(seconds);
-        return `${Math.floor(s / 3600)}:${Math.floor(s / 60) % 60}:${s % 60}`
+
+        const newSeconds = s % 60 < 10 ? `0${s % 60}` : `${s % 60}`;
+        const newMinutes = `${Math.floor(s / 60) % 60 < 10 ? 0 : ""}${Math.floor(s / 60) % 60}`;
+        const newHour = `${Math.floor(s / 3600) < 10 ? 0 : ""}${Math.floor(s / 3600)}`;
+
+        return `${newHour}:${newMinutes}:${newSeconds}`
     }
 
     useEffect(() => {
@@ -80,16 +104,27 @@ export default function Home() {
         setLoadedFFMPEG(true);
     }
 
+    const handleError = () => {
+        alert("No file or input is not between 10s and 3600s");
+    }
+
     const split = async () => {
 
         setDownloadLinks([]);
-        if (!inputRef.current || !inputRef.current.files) return;
+        if (!inputRef.current || !inputRef.current.files) {
+            handleError
+            return;
+        }
 
         const file = inputRef.current.files[0];
+        if (!file) {
+            handleError();
+            return;
+        }
 
         const ffmpeg = ffmpegRef.current;
 
-        await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+        await ffmpeg.writeFile(file.name, await fetchFile(file));
 
         const outputDir = 'output';
 
@@ -99,7 +134,7 @@ export default function Home() {
             await ffmpeg.createDir(outputDir);
         }
 
-        await ffmpeg.exec(['-i', 'input.mp4', '-c:v', 'copy', '-c:a', 'copy', '-f', 'segment', '-segment_time', formatTime(inputTime), '-reset_timestamps', '1', '-map', '0', `${outputDir}/output-part-%d.mp4`]);
+        await ffmpeg.exec(['-i', file.name, '-c:v', 'copy', '-c:a', 'copy', '-f', 'segment', '-segment_time', formatTime(inputTime), '-reset_timestamps', '1', '-map', '0', `${outputDir}/${file.name.split('.')[0]}-part-%d.mp4`]);
 
         const outputFiles = await ffmpeg.listDir(outputDir);
 
@@ -120,14 +155,39 @@ export default function Home() {
                 })
                 .then((url) => {
                     if (!url) return
-                    const element = (<a href={url} download={file.name}> {file.name}</a>)
+                    const element = { filename: file.name, url };
                     return element;
                 })
                 .then((el) => {
                     if (el) setDownloadLinks((prev) => [...prev, el])
                 })
         });
+        setProgress(1);
+        setTimeTaken(0);
     }
+
+    const downloadZip = (downloadLinks: { filename: string, url: string }[]) => {
+        const zip = new JSZip();
+        const promises = downloadLinks.map((downloadLink) => {
+            const promise = fetch(downloadLink.url)
+                .then((response) => response.blob())
+                .then((blob) => { zip.file(downloadLink.filename, blob) })
+            return promise;
+        });
+
+        Promise.all(promises).then(() => {
+            zip.generateAsync({ type: "blob" }).then((content) => {
+                const url = window.URL.createObjectURL(content);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = uploadedFileName.split('.')[0] + "-parts.zip";
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+            });
+        });
+    }
+
 
     if (!loadedFFMPEG) {
         return <div className='flex justify-center items-center h-screen w-screen'> Loading... ~31Mb </div>
@@ -136,7 +196,7 @@ export default function Home() {
     return (
         <>
             <div
-                className='flex flex-col justify-center items-center w-screen h-screen gap-6'
+                className='flex flex-col justify-center items-center min-h-screen gap-6'
             >
 
                 <div className='text-left flex gap-1 flex-col m-4 p-1'>
@@ -150,7 +210,7 @@ export default function Home() {
 
                 <div className="max-w-sm p-1 my-2">
                     <label
-                        className="flex justify-center w-full h-32 px-4 transition border-2 border-white border-dashed rounded-md appearance-none cursor-pointer hover:border-violet-500 focus:outline-none "
+                        className="flex justify-center w-full h-32 px-4 transition border-2 border-white transition-color duration-500 border-dashed rounded-md appearance-none cursor-pointer hover:border-violet-500 focus:outline-none "
                     >
                         {
                             !uploadedFileName && (
@@ -215,23 +275,25 @@ export default function Home() {
                 <div className='flex flex-col items-center justify-center gap-1'>
                     <label>Segment length in seconds:</label>
                     <input
-                        className='w-16 bg-[#0a0a0a] text-violet-500 border-2 border-dashed border-white p-1 rounded-xl text-center focus:outline-none focus:border-violet-500'
+                        className='w-16 bg-[#0a0a0a] transition-color duration-500 text-violet-500 border-2 border-dashed border-white p-1 rounded-xl text-center focus:outline-none focus:border-violet-500'
                         type='number'
-                        min={1}
+                        pattern='[0-9]+'
+                        min={10}
+                        max={3600}
                         value={inputTime}
                         onChange={(e) => {
-                            setInputTime(e.target.value);
+                            setInputTime("" + Math.floor(e.target.valueAsNumber));
                         }}
                     />
                 </div>
                 <button
                     onClick={split}
-                    className='text-xl p-2 border rounded-xl hover:animate-pulse transition-all hover:'
+                    className='text-xl p-2 border-2 border-dashed rounded-xl transition-color duration-500 hover:text-violet-500 hover:border-violet-500'
                 >
                     Split!
                 </button>
 
-                <div className='flex w-[512px] flex-col justify-center items-center'>
+                <div className='flex sm:w-[512px] w-[256px] flex-col justify-center items-center'>
                     <div
                         className='bg-white w-full h-5 rounded-full text-center'
                     >
@@ -242,29 +304,39 @@ export default function Home() {
                     </div>
 
                     <p className='p-1 text-sm mt-1'>{(progress * 100).toFixed(2) + '%'}</p>
-                    <p>Time Remaning: {((((100 / (progress === 0 ? 100 : progress) * 100)) - 1) * timeTaken).toFixed(2) + 's'}</p>
+                    {/* <p>Time Remaning: {((((100 / (progress === 0 ? 1 : progress) * 100)) - 1) * timeTaken).toFixed(2) + 's'}</p> */}
                 </div>
 
                 {downloadLinks.length !== 0 && (
-                    <div className='flex flex-col p-2 border-violet-500 border rounded-lg'>
+                    <div
+                        className='flex flex-col p-2 border-violet-500 border rounded-lg w-5/6 mb-16'
+                    >
                         <div
-                            className='flex justify-end p-1'
+                            className='flex justify-center items-center p-4'
                         >
                             <button
-                                className='p-2'
+                                className='p-2 text-lg text-violet-500 font-bold border-y border-violet-500 transition-all ease-in-out duration-300 rounded-lg'
+                                onClick={(() => { downloadZip(downloadLinks) })}
                             >
                                 Download All
                             </button>
                         </div>
                         <ul
-                            className='grid grid-cols-5 gap-6  p-4'
+                            className='grid grid-cols-2 sm:grid-cols-6 gap-6 p-4'
                         >
                             {downloadLinks.map((el, index) => {
                                 return (
                                     <li
-                                        className=''
+                                        className='p-2 rounded-lg border border-violet-500 text-xs truncate'
                                         key={index}>
-                                        {el}
+
+                                        <a
+                                            href={el.url}
+                                            download={el.filename}
+                                            className=''
+                                        >
+                                            {index}. {el.filename}
+                                        </a>
                                     </li>
                                 )
                             })}
